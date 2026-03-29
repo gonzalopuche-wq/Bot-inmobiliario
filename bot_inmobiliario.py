@@ -1,382 +1,215 @@
-import requests
-import logging
-from datetime import datetime, timedelta
+import requests,logging
+from datetime import datetime,timedelta
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ConversationHandler,
-    filters,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,ConversationHandler,filters,ContextTypes
 
-BOT_TOKEN = "8687228789:AAFQJdFXhSRQ-0o79NWphNxA4PCkcM1759s"
+BOT_TOKEN="8687228789:AAFQJdFXhSRQ-0o79NWphNxA4PCkcM1759s"
+logging.basicConfig(format="%(asctime)s-%(name)s-%(levelname)s-%(message)s",level=logging.INFO)
+HON_TIPO,HON_MONTO,HON_MESES,HON_FISCAL=range(4)
+ACT_MONTO,ACT_FECHA=range(10,12)
+PUN_MONTO,PUN_DIAS=range(20,22)
+TASA_IVA=0.21
+TASA_DIARIA=0.001
+HONORARIOS_INFO={"locacion":{"nombre":"Locación","pide_meses":True,"alicuota":0.05},"compraventa":{"nombre":"Compraventa","pide_meses":False,"alicuota":0.03},"alquiler_comercial":{"nombre":"Locación comercial","pide_meses":True,"alicuota":0.05}}
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+def fmt_pesos(v):
+    return f"$ {v:,.2f}".replace(",","X").replace(".","," ).replace("X",".")
 
-HON_TIPO, HON_MONTO, HON_MESES, HON_FISCAL = range(4)
-ACT_MONTO, ACT_FECHA = range(10, 12)
-PUN_MONTO, PUN_DIAS = range(20, 22)
-
-def fmt_pesos(valor: float) -> str:
-    return f"$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def obtener_icl(fecha_desde, fecha_hasta):
-    url = f"https://api.bcra.gob.ar/estadisticas/v2.0/datosvariable/25/{fecha_desde}/{fecha_hasta}"
+def obtener_icl(d,h):
+    url=f"https://api.bcra.gob.ar/estadisticas/v2.0/datosvariable/25/{d}/{h}"
     try:
-        r = requests.get(url, timeout=10, verify=False)
+        r=requests.get(url,timeout=10,verify=False)
         r.raise_for_status()
-        return r.json().get("results", [])
+        return r.json().get("results",[])
     except Exception as e:
-        logging.error(f"Error BCRA: {e}")
+        logging.error(f"BCRA:{e}")
         return []
 
-def ultimo_icl_disponible():
-    hoy = datetime.today()
-    desde = (hoy - timedelta(days=30)).strftime("%Y-%m-%d")
-    hasta = hoy.strftime("%Y-%m-%d")
-    datos = obtener_icl(desde, hasta)
+def ultimo_icl():
+    hoy=datetime.today()
+    datos=obtener_icl((hoy-timedelta(days=30)).strftime("%Y-%m-%d"),hoy.strftime("%Y-%m-%d"))
     return datos[-1] if datos else None
 
-def icl_en_fecha(fecha_str):
+def icl_fecha(fs):
     try:
-        fecha = datetime.strptime(fecha_str, "%d/%m/%Y")
-        desde = (fecha - timedelta(days=5)).strftime("%Y-%m-%d")
-        hasta = (fecha + timedelta(days=5)).strftime("%Y-%m-%d")
-        datos = obtener_icl(desde, hasta)
+        f=datetime.strptime(fs,"%d/%m/%Y")
+        datos=obtener_icl((f-timedelta(days=5)).strftime("%Y-%m-%d"),(f+timedelta(days=5)).strftime("%Y-%m-%d"))
         if datos:
-            fecha_iso = fecha.strftime("%Y-%m-%d")
+            fi=f.strftime("%Y-%m-%d")
             for d in reversed(datos):
-                if d["fecha"] <= fecha_iso:
+                if d["fecha"]<=fi:
                     return float(d["valor"])
             return float(datos[0]["valor"])
     except Exception as e:
-        logging.error(f"Error ICL fecha: {e}")
+        logging.error(e)
     return None
-HONORARIOS_INFO = {
-    "locacion": {
-        "nombre": "Locación",
-        "pide_meses": True,
-        "alicuota": 0.05,
-    },
-    "compraventa": {
-        "nombre": "Compraventa",
-        "pide_meses": False,
-        "alicuota": 0.03,
-    },
-    "alquiler_comercial": {
-        "nombre": "Locación comercial",
-        "pide_meses": True,
-        "alicuota": 0.05,
-    },
-}
 
-TASA_IVA = 0.21
-TASA_DIARIA = 0.001
+async def start(u,c):
+    await u.message.reply_text("🏠 *Bot del Corredor Inmobiliario*\n━━━━━━━━━━━━━━━━━━━━\n\n• /honorarios\n• /actualizar\n• /punitorios\n• /ayuda\n\n_Ley 13.154 Santa Fe_",parse_mode="Markdown")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = (
-        "🏠 *Bot del Corredor Inmobiliario*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Calculadoras profesionales al instante.\n\n"
-        "📌 *Comandos disponibles:*\n"
-        "• /honorarios — Calcula honorarios\n"
-        "• /actualizar — Actualiza alquiler por ICL\n"
-        "• /punitorios — Interés por mora\n"
-        "• /ayuda — Ver todos los comandos\n\n"
-        "_Basado en Ley Provincial N.º 13.154 (Santa Fe)_"
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
+async def ayuda(u,c):
+    await u.message.reply_text("📋 *Comandos*\n━━━━━━━━━━━━━━━━━━━━\n\n/honorarios — Calcula honorarios\n/actualizar — Actualiza por ICL\n/punitorios — Interés por mora\n/cancelar — Salir",parse_mode="Markdown")
 
-async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = (
-        "📋 *Comandos disponibles*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔢 */honorarios*\n"
-        "Calcula honorarios por tipo de operación\n\n"
-        "📈 */actualizar*\n"
-        "Actualiza alquiler por ICL (BCRA)\n\n"
-        "⚠️ */punitorios*\n"
-        "Calcula interés por mora\n\n"
-        "Escribí /cancelar para salir en cualquier momento."
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
-
-async def honorarios_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = (
-        "🔢 *Calculadora de Honorarios*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "¿Qué tipo de operación?\n\n"
-        "1️⃣ Locación (vivienda)\n"
-        "2️⃣ Compraventa\n"
-        "3️⃣ Locación comercial\n\n"
-        "Respondé con el número."
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
+async def hon_start(u,c):
+    await u.message.reply_text("🔢 *Honorarios*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Locación vivienda\n2️⃣ Compraventa\n3️⃣ Locación comercial\n\nRespondé con el número.",parse_mode="Markdown")
     return HON_TIPO
 
-async def honorarios_tipo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    opcion = update.message.text.strip()
-    tipos = {"1": "locacion", "2": "compraventa", "3": "alquiler_comercial"}
-    if opcion not in tipos:
-        await update.message.reply_text("Respondé con 1, 2 o 3.")
+async def hon_tipo(u,c):
+    op=u.message.text.strip()
+    t={"1":"locacion","2":"compraventa","3":"alquiler_comercial"}
+    if op not in t:
+        await u.message.reply_text("Respondé 1, 2 o 3.")
         return HON_TIPO
-    context.user_data["hon_tipo"] = tipos[opcion]
-    if opcion in ("1", "3"):
-        pregunta = "¿Cuál es el *valor mensual del alquiler* pactado? (solo el número)"
-    else:
-        pregunta = "¿Cuál es el *precio de venta*? (solo el número)"
-    await update.message.reply_text(pregunta, parse_mode="Markdown")
+    c.user_data["ht"]=t[op]
+    p="¿Valor mensual del alquiler? (solo número)" if op in("1","3") else "¿Precio de venta? (solo número)"
+    await u.message.reply_text(p)
     return HON_MONTO
 
-async def honorarios_monto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def hon_monto(u,c):
     try:
-        texto_limpio = update.message.text.strip().replace(".", "").replace(",", ".")
-        monto = float(texto_limpio)
-        context.user_data["hon_monto"] = monto
-    except ValueError:
-        await update.message.reply_text("❌ Ingresá solo el número. Ej: 250000")
+        m=float(u.message.text.strip().replace(".","").replace(",","."))
+        c.user_data["hm"]=m
+    except:
+        await u.message.reply_text("❌ Solo el número. Ej: 250000")
         return HON_MONTO
-    tipo_key = context.user_data["hon_tipo"]
-    tipo_info = HONORARIOS_INFO[tipo_key]
-    if tipo_info["pide_meses"]:
-        await update.message.reply_text(
-            "📅 ¿Cuántos *meses dura el contrato*?\nEj: 24",
-            parse_mode="Markdown"
-        )
+    if HONORARIOS_INFO[c.user_data["ht"]]["pide_meses"]:
+        await u.message.reply_text("📅 ¿Cuántos meses dura el contrato? Ej: 24")
         return HON_MESES
-    else:
-        return await _calcular_honorarios
+    return await calcular(u,c,m,None)
 
-  async def honorarios_meses(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def hon_meses(u,c):
     try:
-        meses = int(update.message.text.strip())
-        if meses <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("❌ Ingresá un número entero. Ej: 24")
+        m=int(u.message.text.strip())
+        assert m>0
+        c.user_data["hms"]=m
+    except:
+        await u.message.reply_text("❌ Número positivo. Ej: 24")
         return HON_MESES
-    context.user_data["hon_meses"] = meses
-    if context.user_data["hon_tipo"] == "alquiler_comercial":
-        await update.message.reply_text(
-            "🧾 ¿Condición fiscal del locador?\n\n"
-            "1️⃣ Responsable Inscripto\n"
-            "2️⃣ Monotributista / Exento\n\n"
-            "Respondé con el número.",
-            parse_mode="Markdown"
-        )
+    if c.user_data["ht"]=="alquiler_comercial":
+        await u.message.reply_text("🧾 Condición fiscal del locador:\n\n1️⃣ Responsable Inscripto\n2️⃣ Monotributista / Exento\n\nRespondé 1 o 2.")
         return HON_FISCAL
-    monto = context.user_data["hon_monto"]
-    return await _calcular_honorarios(update, context, monto, meses)
+    return await calcular(u,c,c.user_data["hm"],m)
 
-async def honorarios_fiscal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    opcion = update.message.text.strip()
-    if opcion not in ("1", "2"):
-        await update.message.reply_text("Respondé con 1 o 2.")
+async def hon_fiscal(u,c):
+    op=u.message.text.strip()
+    if op not in("1","2"):
+        await u.message.reply_text("Respondé 1 o 2.")
         return HON_FISCAL
-    context.user_data["hon_fiscal"] = opcion
-    monto = context.user_data["hon_monto"]
-    meses = context.user_data["hon_meses"]
-    return await _calcular_honorarios(update, context, monto, meses)
+    c.user_data["hf"]=op
+    return await calcular(u,c,c.user_data["hm"],c.user_data["hms"])
 
-async def _calcular_honorarios(update, context, monto, meses):
-    tipo_key = context.user_data["hon_tipo"]
-    tipo_info = HONORARIOS_INFO[tipo_key]
-    alicuota = tipo_info["alicuota"]
+async def calcular(u,c,monto,meses):
+    tk=c.user_data["ht"]
+    ti=HONORARIOS_INFO[tk]
+    al=ti["alicuota"]
+    bs=""
     if meses:
-        base = monto * meses
-        honorarios_neto = base * alicuota
-        iva = honorarios_neto * TASA_IVA
-        honorarios_total = honorarios_neto + iva
-        detalle = (
-            f"📋 Alquiler inicial: {fmt_pesos(monto)}\n"
-            f"✖️ Meses: {meses}\n"
-            f"📦 Base contrato: {fmt_pesos(base)}\n"
-            f"✖️ Alícuota: {alicuota * 100:.0f}%\n\n"
-        )
-        if tipo_key == "alquiler_comercial":
-            fiscal = context.user_data.get("hon_fiscal", "2")
-            if fiscal == "1":
-                alquiler_con_iva = monto * (1 + TASA_IVA)
-                base_sellado = alquiler_con_iva * meses
-                condicion = "Responsable Inscripto (alquiler + IVA)"
+        base=monto*meses
+        hn=base*al
+        iv=hn*TASA_IVA
+        ht=hn+iv
+        det=f"📋 Alquiler: {fmt_pesos(monto)}\n✖️ Meses: {meses}\n📦 Base: {fmt_pesos(base)}\n✖️ Alícuota: {al*100:.0f}%\n\n"
+        if tk=="alquiler_comercial":
+            fis=c.user_data.get("hf","2")
+            if fis=="1":
+                bc=monto*(1+TASA_IVA)*meses
+                cond="Responsable Inscripto (alquiler+IVA)"
             else:
-                alquiler_con_iva = monto
-                base_sellado = monto * meses
-                condicion = "Monotributista / Exento"
-            sellado = base_sellado * 0.025
-            bloque_sellado = (
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔏 *Sellado (2,5%)*\n"
-                f"Condición: _{condicion}_\n"
-                f"Base sellado: {fmt_pesos(base_sellado)}\n"
-                f"Sellado: *{fmt_pesos(sellado)}*\n\n"
-                f"💵 *Total honor. + sellado: {fmt_pesos(honorarios_total + sellado)}*\n\n"
-            )
-        else:
-            bloque_sellado = ""
+                bc=monto*meses
+                cond="Monotributista/Exento"
+            sel=bc*0.025
+            bs=f"━━━━━━━━━━━━━━━━━━━━\n🔏 *Sellado 2,5%*\n_{cond}_\nBase: {fmt_pesos(bc)}\nSellado: *{fmt_pesos(sel)}*\n\n💵 *Total+sellado: {fmt_pesos(ht+sel)}*\n\n"
     else:
-        honorarios_neto = monto * alicuota
-        iva = honorarios_neto * TASA_IVA
-        honorarios_total = honorarios_neto + iva
-        detalle = (
-            f"📦 Precio de venta: {fmt_pesos(monto)}\n"
-            f"✖️ Alícuota: {alicuota * 100:.0f}%\n\n"
-        )
-        bloque_sellado = ""
-    texto = (
-        f"✅ *Resultado — {tipo_info['nombre']}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{detalle}"
-        f"💰 Honorarios netos: *{fmt_pesos(honorarios_neto)}*\n"
-        f"🧾 IVA (21%): {fmt_pesos(iva)}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💵 *Honorarios con IVA: {fmt_pesos(honorarios_total)}*\n\n"
-        f"{bloque_sellado}"
-        f"_Arancel MPP — Ley 13.154 (Santa Fe)_"
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
+        hn=monto*al
+        iv=hn*TASA_IVA
+        ht=hn+iv
+        det=f"📦 Precio venta: {fmt_pesos(monto)}\n✖️ Alícuota: {al*100:.0f}%\n\n"
+    txt=(f"✅ *{ti['nombre']}*\n━━━━━━━━━━━━━━━━━━━━\n\n{det}"
+         f"💰 Honorarios netos: *{fmt_pesos(hn)}*\n🧾 IVA 21%: {fmt_pesos(iv)}\n━━━━━━━━━━━━━━━━━━━━\n"
+         f"💵 *Con IVA: {fmt_pesos(ht)}*\n\n{bs}_Arancel MPP — Ley 13.154_")
+    await u.message.reply_text(txt,parse_mode="Markdown")
     return ConversationHandler.END
 
-async def actualizar_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📈 *Actualización por ICL*\n\n¿Cuál es el alquiler actual? (solo el número)",
-        parse_mode="Markdown"
-    )
+async def act_start(u,c):
+    await u.message.reply_text("📈 *Actualización ICL*\n\n¿Alquiler actual? (solo número)",parse_mode="Markdown")
     return ACT_MONTO
 
-async def actualizar_monto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def act_monto(u,c):
     try:
-        monto = float(update.message.text.strip().replace(".", "").replace(",", "."))
-        context.user_data["act_monto"] = monto
-    except ValueError:
-        await update.message.reply_text("❌ Solo el número. Ej: 180000")
+        m=float(u.message.text.strip().replace(".","").replace(",","."))
+        c.user_data["am"]=m
+    except:
+        await u.message.reply_text("❌ Solo el número.")
         return ACT_MONTO
-    await update.message.reply_text(
-        "📅 ¿Fecha del último ajuste?\nFormato: DD/MM/AAAA",
-        parse_mode="Markdown"
-    )
+    await u.message.reply_text("📅 Fecha del último ajuste (DD/MM/AAAA)")
     return ACT_FECHA
 
-async def actualizar_fecha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    fecha_str = update.message.text.strip()
+async def act_fecha(u,c):
+    fs=u.message.text.strip()
     try:
-        datetime.strptime(fecha_str, "%d/%m/%Y")
-    except ValueError:
-        await update.message.reply_text("❌ Formato incorrecto. Usá DD/MM/AAAA")
+        datetime.strptime(fs,"%d/%m/%Y")
+    except:
+        await u.message.reply_text("❌ Formato DD/MM/AAAA")
         return ACT_FECHA
-    await update.message.reply_text("⏳ Consultando BCRA...")
-    monto = context.user_data["act_monto"]
-    icl_entonces = icl_en_fecha(fecha_str)
-    icl_hoy_data = ultimo_icl_disponible()
-    if not icl_entonces or not icl_hoy_data:
-        await update.message.reply_text("❌ No pude obtener datos del BCRA. Intentá más tarde.")
+    await u.message.reply_text("⏳ Consultando BCRA...")
+    m=c.user_data["am"]
+    i0=icl_fecha(fs)
+    ih=ultimo_icl()
+    if not i0 or not ih:
+        await u.message.reply_text("❌ Error BCRA. Intentá más tarde.")
         return ConversationHandler.END
-    icl_hoy = float(icl_hoy_data["valor"])
-    variacion = (icl_hoy / icl_entonces) - 1
-    nuevo_monto = monto * (icl_hoy / icl_entonces)
-    texto = (
-        f"✅ *Resultado — Actualización ICL*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📅 Fecha inicio: {fecha_str}\n"
-        f"📅 Fecha actual: {icl_hoy_data['fecha']}\n\n"
-        f"📈 Variación: *{variacion * 100:.2f}%*\n\n"
-        f"💰 Alquiler anterior: {fmt_pesos(monto)}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🏠 *Nuevo alquiler: {fmt_pesos(nuevo_monto)}*\n\n"
-        f"_Fuente: BCRA — ICL (Ley 27.551)_"
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
+    iv=float(ih["valor"])
+    var=(iv/i0)-1
+    nm=m*(iv/i0)
+    await u.message.reply_text(f"✅ *Actualización ICL*\n━━━━━━━━━━━━━━━━━━━━\n\n📅 Inicio: {fs}\n📅 Actual: {ih['fecha']}\n\n📈 Variación: *{var*100:.2f}%*\n\n💰 Anterior: {fmt_pesos(m)}\n━━━━━━━━━━━━━━━━━━━━\n🏠 *Nuevo: {fmt_pesos(nm)}*\n\n_BCRA — ICL Ley 27.551_",parse_mode="Markdown")
     return ConversationHandler.END
 
-async def punitorios_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"⚠️ *Punitorios*\n\nTasa: {TASA_DIARIA*100:.1f}% diario\n\n¿Monto adeudado?",
-        parse_mode="Markdown"
-    )
+async def pun_start(u,c):
+    await u.message.reply_text(f"⚠️ *Punitorios*\nTasa: {TASA_DIARIA*100:.1f}% diario\n\n¿Monto adeudado?",parse_mode="Markdown")
     return PUN_MONTO
 
-async def punitorios_monto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pun_monto(u,c):
     try:
-        monto = float(update.message.text.strip().replace(".", "").replace(",", "."))
-        context.user_data["pun_monto"] = monto
-    except ValueError:
-        await update.message.reply_text("❌ Solo el número. Ej: 150000")
+        m=float(u.message.text.strip().replace(".","").replace(",","."))
+        c.user_data["pm"]=m
+    except:
+        await u.message.reply_text("❌ Solo el número.")
         return PUN_MONTO
-    await update.message.reply_text("📅 ¿Cuántos días de mora?")
+    await u.message.reply_text("📅 ¿Cuántos días de mora?")
     return PUN_DIAS
 
-async def punitorios_dias(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pun_dias(u,c):
     try:
-        dias = int(update.message.text.strip())
-        if dias <= 0:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("❌ Ingresá un número positivo. Ej: 15")
+        d=int(u.message.text.strip())
+        assert d>0
+    except:
+        await u.message.reply_text("❌ Número positivo.")
         return PUN_DIAS
-    monto = context.user_data["pun_monto"]
-    interes = monto * TASA_DIARIA * dias
-    total = monto + interes
-    texto = (
-        f"✅ *Resultado — Punitorios*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💰 Monto: {fmt_pesos(monto)}\n"
-        f"📅 Días: {dias}\n\n"
-        f"⚠️ Punitorios: *{fmt_pesos(interes)}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💵 *Total: {fmt_pesos(total)}*"
-    )
-    await update.message.reply_text(texto, parse_mode="Markdown")
+    m=c.user_data["pm"]
+    i=m*TASA_DIARIA*d
+    await u.message.reply_text(f"✅ *Punitorios*\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Monto: {fmt_pesos(m)}\n📅 Días: {d}\n\n⚠️ Interés: *{fmt_pesos(i)}*\n━━━━━━━━━━━━━━━━━━━━\n💵 *Total: {fmt_pesos(m+i)}*",parse_mode="Markdown")
     return ConversationHandler.END
 
-async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Cancelado. Escribí /ayuda para ver opciones.")
+async def cancelar(u,c):
+    await u.message.reply_text("❌ Cancelado. /ayuda para ver opciones.")
     return ConversationHandler.END
 
-async def mensaje_desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Escribí /ayuda para ver los comandos disponibles.")
+async def desconocido(u,c):
+    await u.message.reply_text("Escribí /ayuda para ver los comandos.")
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    conv_honorarios = ConversationHandler(
-        entry_points=[CommandHandler("honorarios", honorarios_start)],
-        states={
-            HON_TIPO:   [MessageHandler(filters.TEXT & ~filters.COMMAND, honorarios_tipo)],
-            HON_MONTO:  [MessageHandler(filters.TEXT & ~filters.COMMAND, honorarios_monto)],
-            HON_MESES:  [MessageHandler(filters.TEXT & ~filters.COMMAND, honorarios_meses)],
-            HON_FISCAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, honorarios_fiscal)],
-        },
-        fallbacks=[CommandHandler("cancelar", cancelar)],
-    )
-    conv_actualizar = ConversationHandler(
-        entry_points=[CommandHandler("actualizar", actualizar_start)],
-        states={
-            ACT_MONTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, actualizar_monto)],
-            ACT_FECHA: [MessageHandler(filters.TEXT & ~filters.COMMAND, actualizar_fecha)],
-        },
-        fallbacks=[CommandHandler("cancelar", cancelar)],
-    )
-    conv_punitorios = ConversationHandler(
-        entry_points=[CommandHandler("punitorios", punitorios_start)],
-        states={
-            PUN_MONTO: [MessageHandler(filters.TEXT & ~filters.COMMAND, punitorios_monto)],
-            PUN_DIAS:  [MessageHandler(filters.TEXT & ~filters.COMMAND, punitorios_dias)],
-        },
-        fallbacks=[CommandHandler("cancelar", cancelar)],
-    )
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ayuda", ayuda))
-    app.add_handler(conv_honorarios)
-    app.add_handler(conv_actualizar)
-    app.add_handler(conv_punitorios)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_desconocido))
+    app=ApplicationBuilder().token(BOT_TOKEN).build()
+    ch=ConversationHandler(entry_points=[CommandHandler("honorarios",hon_start)],states={HON_TIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_tipo)],HON_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_monto)],HON_MESES:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_meses)],HON_FISCAL:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_fiscal)]},fallbacks=[CommandHandler("cancelar",cancelar)])
+    ca=ConversationHandler(entry_points=[CommandHandler("actualizar",act_start)],states={ACT_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_monto)],ACT_FECHA:[MessageHandler(filters.TEXT&~filters.COMMAND,act_fecha)]},fallbacks=[CommandHandler("cancelar",cancelar)])
+    cp=ConversationHandler(entry_points=[CommandHandler("punitorios",pun_start)],states={PUN_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_monto)],PUN_DIAS:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_dias)]},fallbacks=[CommandHandler("cancelar",cancelar)])
+    app.add_handler(CommandHandler("start",start))
+    app.add_handler(CommandHandler("ayuda",ayuda))
+    app.add_handler(ch)
+    app.add_handler(ca)
+    app.add_handler(cp)
+    app.add_handler(MessageHandler(filters.TEXT&~filters.COMMAND,desconocido))
     print("✅ Bot corriendo...")
     app.run_polling()
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
-      
