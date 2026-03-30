@@ -1,4 +1,5 @@
-import requests,logging,re
+import requests,logging,re,urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from datetime import datetime,timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,ConversationHandler,filters,ContextTypes
@@ -26,7 +27,7 @@ def obtener_jus():
 
 def obtener_serie(var_id,d,h):
     try:
-        r=requests.get(f"https://api.bcra.gob.ar/estadisticas/v2.0/datosvariable/{var_id}/{d}/{h}",timeout=10,verify=False)
+        r=requests.get(f"https://api.bcra.gob.ar/estadisticas/v2.0/datosvariable/{var_id}/{d}/{h}",timeout=15,verify=False)
         r.raise_for_status()
         return r.json().get("results",[])
     except Exception as e:
@@ -41,7 +42,7 @@ def ultimo_valor(var_id):
 def valor_en_fecha(var_id,fs):
     try:
         f=datetime.strptime(fs,"%d/%m/%Y")
-        datos=obtener_serie(var_id,(f-timedelta(days=10)).strftime("%Y-%m-%d"),(f+timedelta(days=10)).strftime("%Y-%m-%d"))
+        datos=obtener_serie(var_id,(f-timedelta(days=40)).strftime("%Y-%m-%d"),(f+timedelta(days=5)).strftime("%Y-%m-%d"))
         if datos:
             fi=f.strftime("%Y-%m-%d")
             for d in reversed(datos):
