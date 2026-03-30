@@ -1,4 +1,3 @@
-:
 import requests,logging,re,urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from datetime import datetime,timedelta
@@ -15,6 +14,7 @@ VENTA={"1":{"n":"Casas/Dptos/Oficinas/Locales/Galpones/Quintas","c":0.03,"p":0.0
 ALQUILER={"1":{"n":"Vivienda","al":0.05,"fiscal":False,"sellado":False},"2":{"n":"Locación comercial","al":0.05,"fiscal":True,"sellado":True}}
 INDICES={"1":"icl","2":"ipc","3":"uva"}
 INDICES_NOMBRE={"1":"ICL (Ley 27.551)","2":"IPC Nacional","3":"UVA"}
+BASE="https://api.argly.com.ar/api"
 
 def fmt(v):
     return f"$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
@@ -27,33 +27,33 @@ def obtener_jus():
     except Exception as e: logging.error(f"JUS:{e}")
     return 124873.05
 
-def obtener_serie_argly(indice):
+def get_actual(ind):
     try:
-        r=requests.get(f"https://api.argly.com.ar/api/{indice}",timeout=15)
+        r=requests.get(f"{BASE}/{ind}",timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        logging.error(f"ARGLY:{e}")
-        return []
+        logging.error(f"ARGLY actual {ind}:{e}")
+        return None
 
-def valor_en_fecha_argly(indice,fs):
+def get_en_fecha(ind,fs):
     try:
         f=datetime.strptime(fs,"%d/%m/%Y")
-        datos=obtener_serie_argly(indice)
-        if not datos: return None
-        fi=f.strftime("%Y-%m-%d")
-        candidatos=[d for d in datos if d.get("fecha","")<=fi]
-        if candidatos: return float(candidatos[-1]["valor"])
-        return float(datos[0]["valor"])
+        desde=(f-timedelta(days=5)).strftime("%Y-%m-%d")
+        hasta=f.strftime("%Y-%m-%d")
+        # IPC usa formato AAAA-MM
+        if ind=="ipc":
+            desde=(f-timedelta(days=40)).strftime("%Y-%m")
+            hasta=f.strftime("%Y-%m")
+        r=requests.get(f"{BASE}/{ind}/range",params={"desde":desde,"hasta":hasta},timeout=15)
+        r.raise_for_status()
+        datos=r.json()
+        if isinstance(datos,list) and datos:
+            return datos[-1]
+        if isinstance(datos,dict):
+            return datos
     except Exception as e:
-        logging.error(f"ARGLY fecha:{e}")
-    return None
-
-def ultimo_valor_argly(indice):
-    try:
-        datos=obtener_serie_argly(indice)
-        if datos: return datos[-1]
-    except Exception as e: logging.error(e)
+        logging.error(f"ARGLY range {ind}:{e}")
     return None
 
 async def start(u,c):
@@ -202,17 +202,23 @@ async def act_fecha(u,c):
         return ACT_FECHA
     await u.message.reply_text("⏳ Consultando datos...")
     m=c.user_data["am"]
-    ind_key=INDICES[c.user_data["aindice"]]
+    ind=INDICES[c.user_data["aindice"]]
     ind_nombre=INDICES_NOMBRE[c.user_data["aindice"]]
-    i0=valor_en_fecha_argly(ind_key,fs)
-    ih=ultimo_valor_argly(ind_key)
-    if not i0 or not ih:
-        await u.message.reply_text("❌ No pude obtener datos. Intentá más tarde.")
+    d0=get_en_fecha(ind,fs)
+    dh=get_actual(ind)
+    if not d0 or not dh:
+        await u.message.reply_text(f"❌ No pude obtener datos de {ind_nombre}. Intentá más tarde.")
         return ConversationHandler.END
-    iv=float(ih["valor"])
-    var=(iv/i0)-1
-    nm=m*(iv/i0)
-    await u.message.reply_text(f"✅ *Actualización — {ind_nombre}*\n━━━━━━━━━━━━━━━━━━━━\n\n📅 Inicio: {fs}\n📅 Actual: {ih.get('fecha','hoy')}\n\n📈 Variación: *{var*100:.2f}%*\n\n💰 Alquiler anterior: {fmt(m)}\n➕ Incremento: {fmt(nm-m)}\n━━━━━━━━━━━━━━━━━━━━\n🏠 *Nuevo alquiler: {fmt(nm)}*\n\n_Fuente: Argly · {ind_nombre}_",parse_mode="Markdown")
+    try:
+        v0=float(d0.get("valor",d0.get("value",0)))
+        vh=float(dh.get("valor",dh.get("value",0)))
+        fh=dh.get("fecha",dh.get("date","hoy"))
+        var=(vh/v0)-1
+        nm=m*(vh/v0)
+        await u.message.reply_text(f"✅ *Actualización — {ind_nombre}*\n━━━━━━━━━━━━━━━━━━━━\n\n📅 Inicio: {fs}\n📅 Actual: {fh}\n\n📈 Variación: *{var*100:.2f}%*\n\n💰 Alquiler anterior: {fmt(m)}\n➕ Incremento: {fmt(nm-m)}\n━━━━━━━━━━━━━━━━━━━━\n🏠 *Nuevo alquiler: {fmt(nm)}*\n\n_Fuente: Argly · {ind_nombre}_",parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Calculo:{e} d0={d0} dh={dh}")
+        await u.message.reply_text("❌ Error al calcular. Intentá más tarde.")
     return ConversationHandler.END
 
 async def pun_start(u,c):
