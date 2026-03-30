@@ -1,24 +1,32 @@
-import requests,logging
+import requests,logging,re
 from datetime import datetime,timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,ConversationHandler,filters,ContextTypes
 
 BOT_TOKEN="8687228789:AAEloCc64QmIoZt1dKF8dzbNjjt4UHz7swI"
 logging.basicConfig(format="%(asctime)s-%(name)s-%(levelname)s-%(message)s",level=logging.INFO)
-HON_TIPO,HON_MONTO,HON_MESES,HON_FISCAL=range(4)
+HON_CAT,HON_SUBTIPO,HON_MONTO,HON_MESES,HON_FISCAL=range(5)
 ACT_MONTO,ACT_FECHA=range(10,12)
 PUN_MONTO,PUN_DIAS=range(20,22)
 TASA_IVA=0.21
 TASA_DIARIA=0.001
-HONORARIOS_INFO={"locacion":{"nombre":"Locación","pide_meses":True,"alicuota":0.05},"compraventa":{"nombre":"Compraventa","pide_meses":False,"alicuota":0.03},"alquiler_comercial":{"nombre":"Locación comercial","pide_meses":True,"alicuota":0.05}}
+VENTA={"1":{"n":"Casas/Dptos/Oficinas/Locales/Galpones/Quintas","c":0.03,"p":0.03},"2":{"n":"Terrenos/Lotes/Nichos","c":0.10,"p":0.10},"3":{"n":"Edificios PH","c":0.03,"p":0.03},"4":{"n":"Consorcios/Fideicomisos","c":0.03,"p":0.05},"5":{"n":"Fondo de Comercio","c":0.05,"p":0.05},"6":{"n":"Campos","c":0.03,"p":0.03}}
+ALQUILER={"1":{"n":"Vivienda/Comercial","al":0.05,"fiscal":True},"2":{"n":"Temporada","al":0.10,"fiscal":False},"3":{"n":"Renovación","al":0.05,"fiscal":False},"4":{"n":"Arrendamiento campos","al":0.03,"fiscal":False}}
 
-def fmt_pesos(v):
-    return f"$ {v:,.2f}".replace(",","X").replace(".","," ).replace("X",".")
+def fmt(v):
+    return f"$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
+
+def obtener_jus():
+    try:
+        r=requests.get("https://www.cajaforense.com/index.php?action=portal/show&id_section=148&mnuId_parent=2",timeout=10,verify=False)
+        m=re.search(r'JUS ARANCELARIA[^$]*\$([0-9.,]+)',r.text)
+        if m: return float(m.group(1).replace(".","").replace(",","."))
+    except Exception as e: logging.error(f"JUS:{e}")
+    return 124873.05
 
 def obtener_icl(d,h):
-    url=f"https://api.bcra.gob.ar/estadisticas/v2.0/datosvariable/25/{d}/{h}"
     try:
-        r=requests.get(url,timeout=10,verify=False)
+        r=requests.get(f"https://api.bcra.gob.ar/estadisticas/v2.0/datosvariable/25/{d}/{h}",timeout=10,verify=False)
         r.raise_for_status()
         return r.json().get("results",[])
     except Exception as e:
@@ -37,96 +45,123 @@ def icl_fecha(fs):
         if datos:
             fi=f.strftime("%Y-%m-%d")
             for d in reversed(datos):
-                if d["fecha"]<=fi:
-                    return float(d["valor"])
+                if d["fecha"]<=fi: return float(d["valor"])
             return float(datos[0]["valor"])
-    except Exception as e:
-        logging.error(e)
+    except Exception as e: logging.error(e)
     return None
 
 async def start(u,c):
-    await u.message.reply_text("🏠 *Bot del Corredor Inmobiliario*\n━━━━━━━━━━━━━━━━━━━━\n\n• /honorarios\n• /actualizar\n• /punitorios\n• /ayuda\n\n_Ley 13.154 Santa Fe_",parse_mode="Markdown")
+    await u.message.reply_text("🏠 *Bot del Corredor Inmobiliario*\n━━━━━━━━━━━━━━━━━━━━\n\n• /honorarios — Calculadora COCIR\n• /actualizar — ICL BCRA\n• /punitorios — Interés por mora\n• /ayuda\n\n_Ley 13.154 Santa Fe_",parse_mode="Markdown")
 
 async def ayuda(u,c):
-    await u.message.reply_text("📋 *Comandos*\n━━━━━━━━━━━━━━━━━━━━\n\n/honorarios — Calcula honorarios\n/actualizar — Actualiza por ICL\n/punitorios — Interés por mora\n/cancelar — Salir",parse_mode="Markdown")
+    await u.message.reply_text("📋 *Comandos*\n━━━━━━━━━━━━━━━━━━━━\n\n/honorarios — Honorarios COCIR\n/actualizar — Actualiza alquiler por ICL\n/punitorios — Interés por mora\n/cancelar — Salir",parse_mode="Markdown")
 
 async def hon_start(u,c):
-    await u.message.reply_text("🔢 *Honorarios*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Locación vivienda\n2️⃣ Compraventa\n3️⃣ Locación comercial\n\nRespondé con el número.",parse_mode="Markdown")
-    return HON_TIPO
+    await u.message.reply_text("🔢 *Honorarios COCIR*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Venta\n2️⃣ Alquiler\n3️⃣ Tasación\n4️⃣ Administración\n\nRespondé con el número.",parse_mode="Markdown")
+    return HON_CAT
 
-async def hon_tipo(u,c):
+async def hon_cat(u,c):
     op=u.message.text.strip()
-    t={"1":"locacion","2":"compraventa","3":"alquiler_comercial"}
-    if op not in t:
-        await u.message.reply_text("Respondé 1, 2 o 3.")
-        return HON_TIPO
-    c.user_data["ht"]=t[op]
-    p="¿Valor mensual del alquiler? (solo número)" if op in("1","3") else "¿Precio de venta? (solo número)"
+    if op not in("1","2","3","4"):
+        await u.message.reply_text("Respondé 1, 2, 3 o 4.")
+        return HON_CAT
+    c.user_data["hcat"]=op
+    if op=="1":
+        await u.message.reply_text("🏢 *Venta — Tipo de inmueble*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Casas/Dptos/Oficinas/Locales/Galpones/Quintas\n2️⃣ Terrenos/Lotes/Nichos\n3️⃣ Edificios PH\n4️⃣ Consorcios/Fideicomisos\n5️⃣ Fondo de Comercio\n6️⃣ Campos\n\nRespondé con el número.",parse_mode="Markdown")
+        return HON_SUBTIPO
+    elif op=="2":
+        await u.message.reply_text("🏠 *Alquiler — Tipo*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Vivienda / Comercial\n2️⃣ Temporada\n3️⃣ Renovación\n4️⃣ Arrendamiento campos\n\nRespondé con el número.",parse_mode="Markdown")
+        return HON_SUBTIPO
+    elif op=="3":
+        await u.message.reply_text("📐 *Tasación*\n\n¿Cuál es el valor tasado? (solo el número)",parse_mode="Markdown")
+        return HON_MONTO
+    else:
+        await u.message.reply_text("🏢 *Administración*\n\n¿Monto mensual de alquiler cobrado? (solo el número)",parse_mode="Markdown")
+        return HON_MONTO
+
+async def hon_subtipo(u,c):
+    op=u.message.text.strip()
+    cat=c.user_data["hcat"]
+    if cat=="1" and op not in VENTA:
+        await u.message.reply_text("Respondé del 1 al 6.")
+        return HON_SUBTIPO
+    if cat=="2" and op not in ALQUILER:
+        await u.message.reply_text("Respondé del 1 al 4.")
+        return HON_SUBTIPO
+    c.user_data["hsub"]=op
+    p="💰 ¿Precio de venta? (solo el número)" if cat=="1" else "💰 ¿Valor mensual del alquiler? (solo el número)"
     await u.message.reply_text(p)
     return HON_MONTO
 
 async def hon_monto(u,c):
     try:
         m=float(u.message.text.strip().replace(".","").replace(",","."))
-        c.user_data["hm"]=m
+        c.user_data["hmonto"]=m
     except:
-        await u.message.reply_text("❌ Solo el número. Ej: 250000")
+        await u.message.reply_text("❌ Solo el número. Ej: 5000000")
         return HON_MONTO
-    if HONORARIOS_INFO[c.user_data["ht"]]["pide_meses"]:
-        await u.message.reply_text("📅 ¿Cuántos meses dura el contrato? Ej: 24")
-        return HON_MESES
-    return await calcular(u,c,m,None)
+    cat=c.user_data["hcat"]
+    if cat in("1","3","4"): return await calcular(u,c,m,None)
+    await u.message.reply_text("📅 ¿Cuántos meses dura el contrato? Ej: 24")
+    return HON_MESES
 
 async def hon_meses(u,c):
     try:
         m=int(u.message.text.strip())
         assert m>0
-        c.user_data["hms"]=m
+        c.user_data["hmeses"]=m
     except:
         await u.message.reply_text("❌ Número positivo. Ej: 24")
         return HON_MESES
-    if c.user_data["ht"]=="alquiler_comercial":
+    sub=c.user_data["hsub"]
+    if ALQUILER[sub]["fiscal"]:
         await u.message.reply_text("🧾 Condición fiscal del locador:\n\n1️⃣ Responsable Inscripto\n2️⃣ Monotributista / Exento\n\nRespondé 1 o 2.")
         return HON_FISCAL
-    return await calcular(u,c,c.user_data["hm"],m)
+    return await calcular(u,c,c.user_data["hmonto"],m)
 
 async def hon_fiscal(u,c):
     op=u.message.text.strip()
     if op not in("1","2"):
         await u.message.reply_text("Respondé 1 o 2.")
         return HON_FISCAL
-    c.user_data["hf"]=op
-    return await calcular(u,c,c.user_data["hm"],c.user_data["hms"])
+    c.user_data["hfiscal"]=op
+    return await calcular(u,c,c.user_data["hmonto"],c.user_data["hmeses"])
 
 async def calcular(u,c,monto,meses):
-    tk=c.user_data["ht"]
-    ti=HONORARIOS_INFO[tk]
-    al=ti["alicuota"]
-    bs=""
-    if meses:
-        base=monto*meses
-        hn=base*al
-        iv=hn*TASA_IVA
-        ht=hn+iv
-        det=f"📋 Alquiler: {fmt_pesos(monto)}\n✖️ Meses: {meses}\n📦 Base: {fmt_pesos(base)}\n✖️ Alícuota: {al*100:.0f}%\n\n"
-        if tk=="alquiler_comercial":
-            fis=c.user_data.get("hf","2")
-            if fis=="1":
-                bc=monto*(1+TASA_IVA)*meses
-                cond="Responsable Inscripto (alquiler+IVA)"
-            else:
-                bc=monto*meses
-                cond="Monotributista/Exento"
-            sel=bc*0.025
-            bs=f"━━━━━━━━━━━━━━━━━━━━\n🔏 *Sellado 2,5%*\n_{cond}_\nBase: {fmt_pesos(bc)}\nSellado: *{fmt_pesos(sel)}*\n\n💵 *Total+sellado: {fmt_pesos(ht+sel)}*\n\n"
-    else:
-        hn=monto*al
-        iv=hn*TASA_IVA
-        ht=hn+iv
-        det=f"📦 Precio venta: {fmt_pesos(monto)}\n✖️ Alícuota: {al*100:.0f}%\n\n"
-    txt=(f"✅ *{ti['nombre']}*\n━━━━━━━━━━━━━━━━━━━━\n\n{det}"
-         f"💰 Honorarios netos: *{fmt_pesos(hn)}*\n🧾 IVA 21%: {fmt_pesos(iv)}\n━━━━━━━━━━━━━━━━━━━━\n"
-         f"💵 *Con IVA: {fmt_pesos(ht)}*\n\n{bs}_Arancel MPP — Ley 13.154_")
+    cat=c.user_data["hcat"]
+    if cat=="3":
+        jus=obtener_jus()
+        hon=monto*0.001
+        txt=(f"✅ *Tasación*\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Valor tasado: {fmt(monto)}\n📐 Alícuota: 1‰\n💵 Honorario: *{fmt(hon)}*\n\n━━━━━━━━━━━━━━━━━━━━\n📌 *Mínimos en JUS* (1 JUS = {fmt(jus)})\n• Informativa vivienda: *{fmt(jus)}* (1 JUS)\n• Técnica vivienda: *{fmt(jus*2)}* (2 JUS)\n• Industrias/campos/f.comercio: *{fmt(jus*4)}* (4 JUS)\n\n_Caja Forense 2° Circ. · COCIR_")
+        await u.message.reply_text(txt,parse_mode="Markdown")
+        return ConversationHandler.END
+    if cat=="4":
+        hon=monto*0.10
+        iva=hon*TASA_IVA
+        txt=(f"✅ *Administración*\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Alquiler cobrado: {fmt(monto)}\n📐 Alícuota: 10%\n\n💵 Honorario neto: *{fmt(hon)}*\n🧾 IVA 21%: {fmt(iva)}\n━━━━━━━━━━━━━━━━━━━━\n💵 *Total con IVA: {fmt(hon+iva)}*\n\n_COCIR — Ley 13.154_")
+        await u.message.reply_text(txt,parse_mode="Markdown")
+        return ConversationHandler.END
+    if cat=="1":
+        sub=c.user_data["hsub"]
+        info=VENTA[sub]
+        hc=monto*info["c"]
+        hp=monto*info["p"]
+        txt=(f"✅ *Venta — {info['n']}*\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Precio: {fmt(monto)}\n\n👤 *Comprador ({info['c']*100:.0f}%)*\n   Neto: {fmt(hc)} · IVA: {fmt(hc*TASA_IVA)}\n   *Total: {fmt(hc*1.21)}*\n\n🏠 *Propietario ({info['p']*100:.0f}%)*\n   Neto: {fmt(hp)} · IVA: {fmt(hp*TASA_IVA)}\n   *Total: {fmt(hp*1.21)}*\n\n━━━━━━━━━━━━━━━━━━━━\n💵 *Total ambas partes: {fmt(hc*1.21+hp*1.21)}*\n\n_COCIR — Ley 13.154_")
+        await u.message.reply_text(txt,parse_mode="Markdown")
+        return ConversationHandler.END
+    sub=c.user_data["hsub"]
+    info=ALQUILER[sub]
+    base=monto*meses
+    hl=base*info["al"]
+    hd=base*info["al"]
+    sel_bloque=""
+    if sub=="1":
+        fis=c.user_data.get("hfiscal","2")
+        bs=monto*(1+TASA_IVA)*meses if fis=="1" else base
+        cond="Resp. Inscripto (alquiler+IVA)" if fis=="1" else "Monotributista/Exento"
+        sel=bs*0.025
+        sel_bloque=f"━━━━━━━━━━━━━━━━━━━━\n🔏 *Sellado 2,5%* _{cond}_\nBase: {fmt(bs)}\n*Sellado: {fmt(sel)}*\n\n"
+    txt=(f"✅ *Alquiler — {info['n']}*\n━━━━━━━━━━━━━━━━━━━━\n\n💰 {fmt(monto)} × {meses} meses\n📦 Base: {fmt(base)} · Alícuota: {info['al']*100:.0f}%\n\n👤 *Locatario*\n   Neto: {fmt(hl)} · IVA: {fmt(hl*TASA_IVA)}\n   *Total: {fmt(hl*1.21)}*\n\n🏠 *Locador*\n   Neto: {fmt(hd)} · IVA: {fmt(hd*TASA_IVA)}\n   *Total: {fmt(hd*1.21)}*\n\n{sel_bloque}_COCIR — Ley 13.154_")
     await u.message.reply_text(txt,parse_mode="Markdown")
     return ConversationHandler.END
 
@@ -146,8 +181,7 @@ async def act_monto(u,c):
 
 async def act_fecha(u,c):
     fs=u.message.text.strip()
-    try:
-        datetime.strptime(fs,"%d/%m/%Y")
+    try: datetime.strptime(fs,"%d/%m/%Y")
     except:
         await u.message.reply_text("❌ Formato DD/MM/AAAA")
         return ACT_FECHA
@@ -159,9 +193,8 @@ async def act_fecha(u,c):
         await u.message.reply_text("❌ Error BCRA. Intentá más tarde.")
         return ConversationHandler.END
     iv=float(ih["valor"])
-    var=(iv/i0)-1
     nm=m*(iv/i0)
-    await u.message.reply_text(f"✅ *Actualización ICL*\n━━━━━━━━━━━━━━━━━━━━\n\n📅 Inicio: {fs}\n📅 Actual: {ih['fecha']}\n\n📈 Variación: *{var*100:.2f}%*\n\n💰 Anterior: {fmt_pesos(m)}\n━━━━━━━━━━━━━━━━━━━━\n🏠 *Nuevo: {fmt_pesos(nm)}*\n\n_BCRA — ICL Ley 27.551_",parse_mode="Markdown")
+    await u.message.reply_text(f"✅ *Actualización ICL*\n━━━━━━━━━━━━━━━━━━━━\n\n📅 Inicio: {fs}\n📅 Actual: {ih['fecha']}\n\n📈 Variación: *{((iv/i0)-1)*100:.2f}%*\n\n💰 Anterior: {fmt(m)}\n━━━━━━━━━━━━━━━━━━━━\n🏠 *Nuevo: {fmt(nm)}*\n\n_BCRA — ICL Ley 27.551_",parse_mode="Markdown")
     return ConversationHandler.END
 
 async def pun_start(u,c):
@@ -187,7 +220,7 @@ async def pun_dias(u,c):
         return PUN_DIAS
     m=c.user_data["pm"]
     i=m*TASA_DIARIA*d
-    await u.message.reply_text(f"✅ *Punitorios*\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Monto: {fmt_pesos(m)}\n📅 Días: {d}\n\n⚠️ Interés: *{fmt_pesos(i)}*\n━━━━━━━━━━━━━━━━━━━━\n💵 *Total: {fmt_pesos(m+i)}*",parse_mode="Markdown")
+    await u.message.reply_text(f"✅ *Punitorios*\n━━━━━━━━━━━━━━━━━━━━\n\n💰 Monto: {fmt(m)}\n📅 Días: {d}\n\n⚠️ Interés: *{fmt(i)}*\n━━━━━━━━━━━━━━━━━━━━\n💵 *Total: {fmt(m+i)}*",parse_mode="Markdown")
     return ConversationHandler.END
 
 async def cancelar(u,c):
@@ -199,7 +232,7 @@ async def desconocido(u,c):
 
 def main():
     app=ApplicationBuilder().token(BOT_TOKEN).build()
-    ch=ConversationHandler(entry_points=[CommandHandler("honorarios",hon_start)],states={HON_TIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_tipo)],HON_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_monto)],HON_MESES:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_meses)],HON_FISCAL:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_fiscal)]},fallbacks=[CommandHandler("cancelar",cancelar)])
+    ch=ConversationHandler(entry_points=[CommandHandler("honorarios",hon_start)],states={HON_CAT:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_cat)],HON_SUBTIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_subtipo)],HON_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_monto)],HON_MESES:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_meses)],HON_FISCAL:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_fiscal)]},fallbacks=[CommandHandler("cancelar",cancelar)])
     ca=ConversationHandler(entry_points=[CommandHandler("actualizar",act_start)],states={ACT_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_monto)],ACT_FECHA:[MessageHandler(filters.TEXT&~filters.COMMAND,act_fecha)]},fallbacks=[CommandHandler("cancelar",cancelar)])
     cp=ConversationHandler(entry_points=[CommandHandler("punitorios",pun_start)],states={PUN_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_monto)],PUN_DIAS:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_dias)]},fallbacks=[CommandHandler("cancelar",cancelar)])
     app.add_handler(CommandHandler("start",start))
