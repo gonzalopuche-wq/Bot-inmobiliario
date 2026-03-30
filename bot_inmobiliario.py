@@ -10,7 +10,7 @@ ACT_INDICE,ACT_MONTO,ACT_FECHA=range(9,12)
 PUN_TASA,PUN_MONTO,PUN_DIAS=range(20,23)
 TASA_IVA=0.21
 VENTA={"1":{"n":"Casas/Dptos/Oficinas/Locales/Galpones/Quintas","c":0.03,"p":0.03},"2":{"n":"Terrenos/Lotes/Nichos","c":0.10,"p":0.10},"3":{"n":"Edificios PH","c":0.03,"p":0.03},"4":{"n":"Consorcios/Fideicomisos","c":0.03,"p":0.05},"5":{"n":"Fondo de Comercio","c":0.05,"p":0.05},"6":{"n":"Campos","c":0.03,"p":0.03}}
-ALQUILER={"1":{"n":"Vivienda/Comercial","al":0.05,"fiscal":True},"2":{"n":"Temporada","al":0.10,"fiscal":False},"3":{"n":"Renovación","al":0.05,"fiscal":False},"4":{"n":"Arrendamiento campos","al":0.03,"fiscal":False}}
+ALQUILER={"1":{"n":"Vivienda","al":0.05,"fiscal":False,"sellado":False},"2":{"n":"Locación comercial","al":0.05,"fiscal":True,"sellado":True}}
 INDICES={"1":{"n":"ICL (Ley 27.551)","id":25},"2":{"n":"IPC Nacional","id":27},"3":{"n":"CVS","id":28}}
 
 def fmt(v):
@@ -70,7 +70,7 @@ async def hon_cat(u,c):
         await u.message.reply_text("🏢 *Venta — Tipo de inmueble*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Casas/Dptos/Oficinas/Locales/Galpones/Quintas\n2️⃣ Terrenos/Lotes/Nichos\n3️⃣ Edificios PH\n4️⃣ Consorcios/Fideicomisos\n5️⃣ Fondo de Comercio\n6️⃣ Campos\n\nRespondé con el número.",parse_mode="Markdown")
         return HON_SUBTIPO
     elif op=="2":
-        await u.message.reply_text("🏠 *Alquiler — Tipo*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Vivienda / Comercial\n2️⃣ Temporada\n3️⃣ Renovación\n4️⃣ Arrendamiento campos\n\nRespondé con el número.",parse_mode="Markdown")
+        await u.message.reply_text("🏠 *Alquiler — Tipo*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Vivienda\n2️⃣ Locación comercial\n\nRespondé con el número.",parse_mode="Markdown")
         return HON_SUBTIPO
     elif op=="3":
         await u.message.reply_text("📐 *Tasación*\n\n¿Cuál es el valor tasado? (solo el número)",parse_mode="Markdown")
@@ -86,7 +86,7 @@ async def hon_subtipo(u,c):
         await u.message.reply_text("Respondé del 1 al 6.")
         return HON_SUBTIPO
     if cat=="2" and op not in ALQUILER:
-        await u.message.reply_text("Respondé del 1 al 4.")
+        await u.message.reply_text("Respondé 1 o 2.")
         return HON_SUBTIPO
     c.user_data["hsub"]=op
     p="💰 ¿Precio de venta? (solo el número)" if cat=="1" else "💰 ¿Valor mensual del alquiler? (solo el número)"
@@ -155,7 +155,7 @@ async def calcular(u,c,monto,meses):
     hl=base*info["al"]
     hd=base*info["al"]
     sel_bloque=""
-    if sub=="1":
+    if info["sellado"]:
         fis=c.user_data.get("hfiscal","2")
         bs=monto*(1+TASA_IVA)*meses if fis=="1" else base
         cond="Resp. Inscripto (alquiler+IVA)" if fis=="1" else "Monotributista/Exento"
