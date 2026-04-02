@@ -7,14 +7,13 @@ from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,Conver
 BOT_TOKEN="8687228789:AAEloCc64QmIoZt1dKF8dzbNjjt4UHz7swI"
 logging.basicConfig(format="%(asctime)s-%(name)s-%(levelname)s-%(message)s",level=logging.INFO)
 HON_CAT,HON_SUBTIPO,HON_MONTO,HON_MESES,HON_FISCAL=range(5)
-ACT_INDICE,ACT_MONTO,ACT_FECHA=range(9,12)
+ACT_PERIODO,ACT_INDICE,ACT_MONTO,ACT_PORC=range(9,13)
 PUN_TASA,PUN_MONTO,PUN_DIAS=range(20,23)
 TASA_IVA=0.21
 VENTA={"1":{"n":"Casas/Dptos/Oficinas/Locales/Galpones/Quintas","c":0.03,"p":0.03},"2":{"n":"Terrenos/Lotes/Nichos","c":0.10,"p":0.10},"3":{"n":"Edificios PH","c":0.03,"p":0.03},"4":{"n":"Consorcios/Fideicomisos","c":0.03,"p":0.05},"5":{"n":"Fondo de Comercio","c":0.05,"p":0.05},"6":{"n":"Campos","c":0.03,"p":0.03}}
 ALQUILER={"1":{"n":"Vivienda","al":0.05,"fiscal":False,"sellado":False},"2":{"n":"Locación comercial","al":0.05,"fiscal":True,"sellado":True}}
-INDICES={"1":"icl","2":"ipc","3":"uva"}
-INDICES_NOMBRE={"1":"ICL (Ley 27.551)","2":"IPC Nacional","3":"UVA"}
-BASE="https://api.argly.com.ar/api"
+PERIODOS={"1":"Mensual","2":"Trimestral","3":"Cuatrimestral","4":"Semestral","5":"Anual"}
+INDICES_NOMBRE={"1":"ICL","2":"IPC","3":"CVS","4":"Otro"}
 
 def fmt(v):
     return f"$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
@@ -27,40 +26,11 @@ def obtener_jus():
     except Exception as e: logging.error(f"JUS:{e}")
     return 124873.05
 
-def get_actual(ind):
-    try:
-        r=requests.get(f"{BASE}/{ind}",timeout=15)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        logging.error(f"ARGLY actual {ind}:{e}")
-        return None
-
-def get_en_fecha(ind,fs):
-    try:
-        f=datetime.strptime(fs,"%d/%m/%Y")
-        desde=(f-timedelta(days=5)).strftime("%Y-%m-%d")
-        hasta=f.strftime("%Y-%m-%d")
-        # IPC usa formato AAAA-MM
-        if ind=="ipc":
-            desde=(f-timedelta(days=40)).strftime("%Y-%m")
-            hasta=f.strftime("%Y-%m")
-        r=requests.get(f"{BASE}/{ind}/range",params={"desde":desde,"hasta":hasta},timeout=15)
-        r.raise_for_status()
-        datos=r.json()
-        if isinstance(datos,list) and datos:
-            return datos[-1]
-        if isinstance(datos,dict):
-            return datos
-    except Exception as e:
-        logging.error(f"ARGLY range {ind}:{e}")
-    return None
-
 async def start(u,c):
-    await u.message.reply_text("🏠 *Bot del Corredor Inmobiliario*\n━━━━━━━━━━━━━━━━━━━━\n\n• /honorarios — Calculadora COCIR\n• /actualizar — ICL · IPC · UVA\n• /punitorios — Interés por mora\n• /ayuda\n\n_Ley 13.154 Santa Fe_",parse_mode="Markdown")
+    await u.message.reply_text("🏠 *Bot del Corredor Inmobiliario*\n━━━━━━━━━━━━━━━━━━━━\n\n• /honorarios — Calculadora COCIR\n• /actualizar — Actualización de alquiler\n• /punitorios — Interés por mora\n• /ayuda\n\n_Ley 13.154 Santa Fe_",parse_mode="Markdown")
 
 async def ayuda(u,c):
-    await u.message.reply_text("📋 *Comandos*\n━━━━━━━━━━━━━━━━━━━━\n\n/honorarios — Honorarios COCIR\n/actualizar — Actualiza alquiler (ICL/IPC/UVA)\n/punitorios — Interés por mora\n/cancelar — Salir",parse_mode="Markdown")
+    await u.message.reply_text("📋 *Comandos*\n━━━━━━━━━━━━━━━━━━━━\n\n/honorarios — Honorarios COCIR\n/actualizar — Actualiza alquiler por índice\n/punitorios — Interés por mora\n/cancelar — Salir",parse_mode="Markdown")
 
 async def hon_start(u,c):
     await u.message.reply_text("🔢 *Honorarios COCIR*\n━━━━━━━━━━━━━━━━━━━━\n\n1️⃣ Venta\n2️⃣ Alquiler\n3️⃣ Tasación\n4️⃣ Administración\n\nRespondé con el número.",parse_mode="Markdown")
@@ -172,16 +142,25 @@ async def calcular(u,c,monto,meses):
     return ConversationHandler.END
 
 async def act_start(u,c):
-    await u.message.reply_text("📈 *Actualización de Alquiler*\n━━━━━━━━━━━━━━━━━━━━\n\n¿Qué índice querés usar?\n\n1️⃣ ICL — Índice Contratos Locación\n2️⃣ IPC — Índice Precios al Consumidor\n3️⃣ UVA — Unidad de Valor Adquisitivo\n\nRespondé con el número.",parse_mode="Markdown")
+    await u.message.reply_text("📈 *Actualización de Alquiler*\n━━━━━━━━━━━━━━━━━━━━\n\n¿Cada cuánto se actualiza?\n\n1️⃣ Mensual\n2️⃣ Trimestral\n3️⃣ Cuatrimestral\n4️⃣ Semestral\n5️⃣ Anual\n\nRespondé con el número.",parse_mode="Markdown")
+    return ACT_PERIODO
+
+async def act_periodo(u,c):
+    op=u.message.text.strip()
+    if op not in PERIODOS:
+        await u.message.reply_text("Respondé del 1 al 5.")
+        return ACT_PERIODO
+    c.user_data["aperido"]=op
+    await u.message.reply_text(f"📊 Período: *{PERIODOS[op]}*\n\n¿Qué índice usás?\n\n1️⃣ ICL\n2️⃣ IPC\n3️⃣ CVS\n4️⃣ Otro\n\nRespondé con el número.",parse_mode="Markdown")
     return ACT_INDICE
 
 async def act_indice(u,c):
     op=u.message.text.strip()
-    if op not in INDICES:
-        await u.message.reply_text("Respondé 1, 2 o 3.")
+    if op not in INDICES_NOMBRE:
+        await u.message.reply_text("Respondé del 1 al 4.")
         return ACT_INDICE
     c.user_data["aindice"]=op
-    await u.message.reply_text(f"📊 Índice: *{INDICES_NOMBRE[op]}*\n\n💰 ¿Alquiler actual? (solo el número)",parse_mode="Markdown")
+    await u.message.reply_text(f"💰 ¿Alquiler actual? (solo el número)")
     return ACT_MONTO
 
 async def act_monto(u,c):
@@ -191,34 +170,35 @@ async def act_monto(u,c):
     except:
         await u.message.reply_text("❌ Solo el número.")
         return ACT_MONTO
-    await u.message.reply_text("📅 Fecha del último ajuste (DD/MM/AAAA)")
-    return ACT_FECHA
+    ind=INDICES_NOMBRE[c.user_data["aindice"]]
+    per=PERIODOS[c.user_data["aperido"]]
+    await u.message.reply_text(f"📐 ¿Cuál es el porcentaje de variación {ind} del período {per}?\n\nEj: `84.5` para 84,5%\n_(lo consultás en bcra.gob.ar o cocir.org.ar)_",parse_mode="Markdown")
+    return ACT_PORC
 
-async def act_fecha(u,c):
-    fs=u.message.text.strip()
-    try: datetime.strptime(fs,"%d/%m/%Y")
-    except:
-        await u.message.reply_text("❌ Formato DD/MM/AAAA. Ej: 01/01/2025")
-        return ACT_FECHA
-    await u.message.reply_text("⏳ Consultando datos...")
-    m=c.user_data["am"]
-    ind=INDICES[c.user_data["aindice"]]
-    ind_nombre=INDICES_NOMBRE[c.user_data["aindice"]]
-    d0=get_en_fecha(ind,fs)
-    dh=get_actual(ind)
-    if not d0 or not dh:
-        await u.message.reply_text(f"❌ No pude obtener datos de {ind_nombre}. Intentá más tarde.")
-        return ConversationHandler.END
+async def act_porc(u,c):
     try:
-        v0=float(d0.get("valor",d0.get("value",0)))
-        vh=float(dh.get("valor",dh.get("value",0)))
-        fh=dh.get("fecha",dh.get("date","hoy"))
-        var=(vh/v0)-1
-        nm=m*(vh/v0)
-        await u.message.reply_text(f"✅ *Actualización — {ind_nombre}*\n━━━━━━━━━━━━━━━━━━━━\n\n📅 Inicio: {fs}\n📅 Actual: {fh}\n\n📈 Variación: *{var*100:.2f}%*\n\n💰 Alquiler anterior: {fmt(m)}\n➕ Incremento: {fmt(nm-m)}\n━━━━━━━━━━━━━━━━━━━━\n🏠 *Nuevo alquiler: {fmt(nm)}*\n\n_Fuente: Argly · {ind_nombre}_",parse_mode="Markdown")
-    except Exception as e:
-        logging.error(f"Calculo:{e} d0={d0} dh={dh}")
-        await u.message.reply_text("❌ Error al calcular. Intentá más tarde.")
+        p=float(u.message.text.strip().replace(",","."))
+        assert p>0
+    except:
+        await u.message.reply_text("❌ Ingresá el porcentaje. Ej: 84.5")
+        return ACT_PORC
+    m=c.user_data["am"]
+    ind=INDICES_NOMBRE[c.user_data["aindice"]]
+    per=PERIODOS[c.user_data["aperido"]]
+    nm=m*(1+p/100)
+    inc=nm-m
+    await u.message.reply_text(
+        f"✅ *Actualización — {ind} {per}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📊 Índice: {ind}\n"
+        f"🗓 Período: {per}\n"
+        f"📈 Variación: *{p:.2f}%*\n\n"
+        f"💰 Alquiler anterior: {fmt(m)}\n"
+        f"➕ Incremento: {fmt(inc)}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🏠 *Nuevo alquiler: {fmt(nm)}*",
+        parse_mode="Markdown"
+    )
     return ConversationHandler.END
 
 async def pun_start(u,c):
@@ -269,7 +249,7 @@ async def desconocido(u,c):
 def main():
     app=ApplicationBuilder().token(BOT_TOKEN).build()
     ch=ConversationHandler(entry_points=[CommandHandler("honorarios",hon_start)],states={HON_CAT:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_cat)],HON_SUBTIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_subtipo)],HON_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_monto)],HON_MESES:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_meses)],HON_FISCAL:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_fiscal)]},fallbacks=[CommandHandler("cancelar",cancelar)])
-    ca=ConversationHandler(entry_points=[CommandHandler("actualizar",act_start)],states={ACT_INDICE:[MessageHandler(filters.TEXT&~filters.COMMAND,act_indice)],ACT_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_monto)],ACT_FECHA:[MessageHandler(filters.TEXT&~filters.COMMAND,act_fecha)]},fallbacks=[CommandHandler("cancelar",cancelar)])
+    ca=ConversationHandler(entry_points=[CommandHandler("actualizar",act_start)],states={ACT_PERIODO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_periodo)],ACT_INDICE:[MessageHandler(filters.TEXT&~filters.COMMAND,act_indice)],ACT_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_monto)],ACT_PORC:[MessageHandler(filters.TEXT&~filters.COMMAND,act_porc)]},fallbacks=[CommandHandler("cancelar",cancelar)])
     cp=ConversationHandler(entry_points=[CommandHandler("punitorios",pun_start)],states={PUN_TASA:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_tasa)],PUN_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_monto)],PUN_DIAS:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_dias)]},fallbacks=[CommandHandler("cancelar",cancelar)])
     app.add_handler(CommandHandler("start",start))
     app.add_handler(CommandHandler("ayuda",ayuda))
@@ -282,3 +262,12 @@ def main():
 
 if __name__=="__main__":
     main()
+```
+
+**Commit changes** y probás `/actualizar`. El flujo queda:
+```
+¿Cada cuánto? → Mensual/Trimestral/etc
+¿Qué índice? → ICL/IPC/CVS/Otro
+¿Alquiler actual?
+¿% de variación? (lo ingresás vos)
+→ Resultado
