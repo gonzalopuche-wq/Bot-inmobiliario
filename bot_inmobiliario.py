@@ -266,8 +266,3 @@ if __name__=="__main__":
 
 **Commit changes** y probás `/actualizar`. El flujo queda:
 ```
-¿Cada cuánto? → Mensual/Trimestral/etc
-¿Qué índice? → ICL/IPC/CVS/Otro
-¿Alquiler actual?
-¿% de variación? (lo ingresás vos)
-→ Resultado
