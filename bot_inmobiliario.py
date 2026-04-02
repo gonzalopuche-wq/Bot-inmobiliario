@@ -20,9 +20,6 @@ BASE="https://api.argly.com.ar/api"
 def fmt(v):
     return f"$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
 
-def fmt_usd(v):
-    return f"USD {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
-
 def obtener_jus():
     try:
         r=requests.get("https://www.cajaforense.com/index.php?action=portal/show&id_section=148&mnuId_parent=2",timeout=10,verify=False)
@@ -43,8 +40,7 @@ def obtener_blue():
                 if "blue" in nombre:
                     compra=float(d.get("compra",0))
                     venta=float(d.get("venta",0))
-                    if compra and venta:
-                        return (compra+venta)/2
+                    if compra and venta: return (compra+venta)/2
         if isinstance(data,dict):
             for k,v in data.items():
                 if "blue" in str(k).lower():
@@ -96,14 +92,38 @@ def buscar_en_lista(datos,fecha_str):
     except Exception as e: logging.error(f"buscar:{e}")
     return None
 
+MSG_MENU=(
+    "Bot del Corredor Inmobiliario\n"
+    "Grupo Foro Inmobiliario\n\n"
+    "/honorarios - Calculadora COCIR\n"
+    "/actualizar - ICL IPC Casa Propia UVA\n"
+    "/punitorios - Interes por mora\n"
+    "/ley - Ley Provincial 13154\n\n"
+    "En cualquier momento escribi /menu para volver aca."
+)
+
 async def start(u,c):
-    await u.message.reply_text("Bot del Corredor Inmobiliario\n\n/honorarios - Calculadora COCIR\n/actualizar - ICL IPC Casa Propia UVA\n/punitorios - Interes por mora\n/ley - Ley Provincial 13154\n/ayuda")
+    await u.message.reply_text(MSG_MENU)
+
+async def menu(u,c):
+    await u.message.reply_text(MSG_MENU)
 
 async def ayuda(u,c):
-    await u.message.reply_text("/honorarios - Honorarios COCIR\n/actualizar - Actualiza alquiler automatico\n/punitorios - Interes por mora\n/ley - Ley Provincial 13154\n/cancelar - Salir")
+    await u.message.reply_text(
+        "/honorarios - Honorarios COCIR\n"
+        "/actualizar - Actualiza alquiler automatico\n"
+        "/punitorios - Interes por mora\n"
+        "/ley - Ley Provincial 13154\n"
+        "/menu - Volver al menu principal\n"
+        "/cancelar - Salir del flujo actual"
+    )
 
 async def ley(u,c):
-    await u.message.reply_text("Ley Provincial N 13154 - Corredores Inmobiliarios Santa Fe\n\nhttps://cocir.org.ar/novedades/25/ley-provincial-n-13154/")
+    await u.message.reply_text(
+        "Ley Provincial N 13154\n"
+        "Corredores Inmobiliarios Santa Fe\n\n"
+        "https://cocir.org.ar/novedades/25/ley-provincial-n-13154/"
+    )
 
 async def hon_start(u,c):
     await u.message.reply_text("Honorarios COCIR\n\n1 Venta\n2 Alquiler\n3 Tasacion\n4 Administracion\n\nResponde con el numero.")
@@ -217,7 +237,8 @@ async def calcular(u,c,monto,meses):
             f"Se aplica: {criterio}\n"
             f"Honorario: {fmt(aplicado)}\n\n"
             f"1 JUS = {fmt(jus)}\n"
-            f"Caja Forense - COCIR"
+            f"Caja Forense - COCIR\n\n"
+            f"/menu para volver al inicio"
         )
         return ConversationHandler.END
     if cat=="4":
@@ -230,7 +251,8 @@ async def calcular(u,c,monto,meses):
             f"Honorario neto: {fmt(hon)}\n"
             f"IVA 21%: {fmt(iva)}\n"
             f"Total con IVA: {fmt(hon+iva)}\n\n"
-            f"COCIR - Ley 13.154"
+            f"COCIR - Ley 13.154\n\n"
+            f"/menu para volver al inicio"
         )
         return ConversationHandler.END
     if cat=="1":
@@ -256,7 +278,8 @@ async def calcular(u,c,monto,meses):
                 f"Precio: USD {monto:,.2f}{blue_txt}\n\n"
                 f"Comprador ({info['c']*100:.0f}%): {detalle_c}\n"
                 f"Propietario ({info['p']*100:.0f}%): {detalle_p}\n\n"
-                f"COCIR - Ley 13.154"
+                f"COCIR - Ley 13.154\n\n"
+                f"/menu para volver al inicio"
             )
         else:
             await u.message.reply_text(
@@ -264,7 +287,8 @@ async def calcular(u,c,monto,meses):
                 f"Precio: {fmt(monto)}\n\n"
                 f"Comprador ({info['c']*100:.0f}%): {fmt(hc)}\n"
                 f"Propietario ({info['p']*100:.0f}%): {fmt(hp)}\n\n"
-                f"COCIR - Ley 13.154"
+                f"COCIR - Ley 13.154\n\n"
+                f"/menu para volver al inicio"
             )
         return ConversationHandler.END
     sub=c.user_data["hsub"]
@@ -285,7 +309,8 @@ async def calcular(u,c,monto,meses):
         f"Base: {fmt(base)} Alicuota: {info['al']*100:.0f}%\n\n"
         f"Locatario\nNeto: {fmt(hl)} IVA: {fmt(hl*TASA_IVA)}\nTotal: {fmt(hl*1.21)}\n\n"
         f"Locador\nNeto: {fmt(hd)} IVA: {fmt(hd*TASA_IVA)}\nTotal: {fmt(hd*1.21)}\n"
-        f"{sel_bloque}\nCOCIR - Ley 13.154"
+        f"{sel_bloque}\nCOCIR - Ley 13.154\n\n"
+        f"/menu para volver al inicio"
     )
     return ConversationHandler.END
 
@@ -362,7 +387,8 @@ async def act_fecha(u,c):
         f"Alquiler anterior: {fmt(m)}\n"
         f"Incremento: {fmt(nm-m)}\n"
         f"Nuevo alquiler: {fmt(nm)}\n\n"
-        f"Fuente: Argly - {ind['n']}"
+        f"Fuente: Argly - {ind['n']}\n\n"
+        f"/menu para volver al inicio"
     )
     return ConversationHandler.END
 
@@ -409,23 +435,25 @@ async def pun_dias(u,c):
         f"Tasa: {tasa_display:.2f}% diario\n"
         f"Dias: {d}\n\n"
         f"Interes: {fmt(i)}\n"
-        f"Total: {fmt(m+i)}"
+        f"Total: {fmt(m+i)}\n\n"
+        f"/menu para volver al inicio"
     )
     return ConversationHandler.END
 
 async def cancelar(u,c):
-    await u.message.reply_text("Cancelado. /ayuda para ver opciones.")
+    await u.message.reply_text("Cancelado.\n\n/menu para volver al inicio.")
     return ConversationHandler.END
 
 async def desconocido(u,c):
-    await u.message.reply_text("Escribe /ayuda para ver los comandos.")
+    await u.message.reply_text("Escribe /menu para ver los comandos disponibles.")
 
 def main():
     app=ApplicationBuilder().token(BOT_TOKEN).build()
-    ch=ConversationHandler(entry_points=[CommandHandler("honorarios",hon_start)],states={HON_CAT:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_cat)],HON_SUBTIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_subtipo)],HON_TAS_TIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_tas_tipo)],HON_MONEDA:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_moneda)],HON_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_monto)],HON_MESES:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_meses)],HON_FISCAL:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_fiscal)]},fallbacks=[CommandHandler("cancelar",cancelar)])
-    ca=ConversationHandler(entry_points=[CommandHandler("actualizar",act_start)],states={ACT_PERIODO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_periodo)],ACT_INDICE:[MessageHandler(filters.TEXT&~filters.COMMAND,act_indice)],ACT_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_monto)],ACT_FECHA:[MessageHandler(filters.TEXT&~filters.COMMAND,act_fecha)]},fallbacks=[CommandHandler("cancelar",cancelar)])
-    cp=ConversationHandler(entry_points=[CommandHandler("punitorios",pun_start)],states={PUN_TASA:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_tasa)],PUN_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_monto)],PUN_DIAS:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_dias)]},fallbacks=[CommandHandler("cancelar",cancelar)])
+    ch=ConversationHandler(entry_points=[CommandHandler("honorarios",hon_start)],states={HON_CAT:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_cat)],HON_SUBTIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_subtipo)],HON_TAS_TIPO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_tas_tipo)],HON_MONEDA:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_moneda)],HON_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_monto)],HON_MESES:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_meses)],HON_FISCAL:[MessageHandler(filters.TEXT&~filters.COMMAND,hon_fiscal)]},fallbacks=[CommandHandler("cancelar",cancelar),CommandHandler("menu",menu)])
+    ca=ConversationHandler(entry_points=[CommandHandler("actualizar",act_start)],states={ACT_PERIODO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_periodo)],ACT_INDICE:[MessageHandler(filters.TEXT&~filters.COMMAND,act_indice)],ACT_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,act_monto)],ACT_FECHA:[MessageHandler(filters.TEXT&~filters.COMMAND,act_fecha)]},fallbacks=[CommandHandler("cancelar",cancelar),CommandHandler("menu",menu)])
+    cp=ConversationHandler(entry_points=[CommandHandler("punitorios",pun_start)],states={PUN_TASA:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_tasa)],PUN_MONTO:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_monto)],PUN_DIAS:[MessageHandler(filters.TEXT&~filters.COMMAND,pun_dias)]},fallbacks=[CommandHandler("cancelar",cancelar),CommandHandler("menu",menu)])
     app.add_handler(CommandHandler("start",start))
+    app.add_handler(CommandHandler("menu",menu))
     app.add_handler(CommandHandler("ayuda",ayuda))
     app.add_handler(CommandHandler("ley",ley))
     app.add_handler(ch)
