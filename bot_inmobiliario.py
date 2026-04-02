@@ -262,7 +262,3 @@ def main():
 
 if __name__=="__main__":
     main()
-```
-
-**Commit changes** y probás `/actualizar`. El flujo queda:
-```
